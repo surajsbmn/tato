@@ -6,6 +6,8 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <errno.h>
+#include "logger.h"
 
 #define PORT 8899
 
@@ -13,12 +15,14 @@ char *build_response();
 
 int main()
 {
-	int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+	logger_init("server.log");
 
-	if (sock_fd < 0)
+	int listener_socket = socket(AF_INET, SOCK_STREAM, 0);
+
+	if (listener_socket < 0)
 	{
-		perror("Error creating socket!");
-		return 1;
+		log_error("Error creating socket file descriptor", strerror(errno));
+		exit(EXIT_FAILURE);
 	}
 
 	struct sockaddr_in server_addr;
@@ -28,23 +32,24 @@ int main()
 	server_addr.sin_port = htons(PORT);
 
 	int opt = 1;
-	setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-	if (bind(sock_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+	setsockopt(listener_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+	if (bind(listener_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
 	{
-		perror("Bind failed");
-		close(sock_fd);
+		log_error("Bind failed", strerror(errno));
+		close(listener_socket);
 		exit(EXIT_FAILURE);
 	}
 
-	if (listen(sock_fd, 3) < 0)
+	if (listen(listener_socket, 3) < 0)
 	{
-		perror("Failed to listen on socket");
-		close(sock_fd);
+		log_error("Failed to listen on socket", strerror(errno));
+		close(listener_socket);
 		exit(EXIT_FAILURE);
 	}
 
-	printf("Listening on port %d ...\n", PORT);
-	int new_socket;
+	log_info("Listening on port %d ...", PORT);
+
+	int socket;
 	struct sockaddr_in client_addr;
 	socklen_t client_len = sizeof(client_addr);
 
@@ -52,32 +57,32 @@ int main()
 	while (1)
 	{
 		// Accept incoming connection
-		if ((new_socket = accept(sock_fd, (struct sockaddr *)&client_addr,
+		if ((socket = accept(listener_socket, (struct sockaddr *)&client_addr,
 								 &client_len)) < 0)
 		{
-			perror("Accept failed");
-			close(sock_fd);
+			log_error("Failed to accept connection", strerror(errno));
+			close(listener_socket);
 			exit(EXIT_FAILURE);
 		}
 
 		char *client_sin_addr = inet_ntoa(client_addr.sin_addr);
 		int client_port = ntohs(client_addr.sin_port);
-		printf("Connection accepted from %s:%d\n", client_sin_addr, client_port);
+		log_info("Connection accepted from %s:%d\n", client_sin_addr, client_port);
 
 		// read what client is sending
 		char buffer[4096] = {0};
-		read(new_socket, buffer, sizeof(buffer) - 1);
-		printf("Request:\n%s\n", buffer);
+		read(socket, buffer, sizeof(buffer) - 1);
+		log_info("Request:\n%s\n", buffer);
 
 		char *response = build_response();
 
-		send(new_socket, response, strlen(response), 0);
+		send(socket, response, strlen(response), 0);
 		free(response);
 	}
 
 	// Close the sockets
-	close(new_socket);
-	close(sock_fd);
+	close(socket);
+	close(listener_socket);
 
 	return 0;
 }
