@@ -1,15 +1,26 @@
 CC = gcc
+CPPFLAGS = -Iinclude
 CFLAGS = -Wall -Wextra -std=c11 -O2
-LDFLAGS = -lpthread
+LDFLAGS = 
+LDLIBS = -lpthread
 
-TARGET = server
-SRC = $(wildcard *.c)
-OBJ = $(SRC:.c=.o)
+TARGET = build/server
+SRC = $(wildcard src/*.c)
+OBJ = $(SRC:src/%.c=build/%.o)
 
 all: $(TARGET)
 
-$(TARGET): $(OBJ)
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+$(TARGET): $(OBJ) | build
+	$(CC) $(OBJ) -o $@ $(LDFLAGS) $(LDLIBS)
+
+build/%.o: src/%.c | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+build:
+	mkdir -p build
+
+debug: CFLAGS += -g -O0
+debug: clean all
 
 clean:
 	rm -f $(TARGET) $(OBJ)
