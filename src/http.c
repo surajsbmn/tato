@@ -1,0 +1,104 @@
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include "logger.h"
+#include "http.h"
+
+int read_request(int socket, http_request_t *req)
+{
+    char buffer[MAX_REQUEST_SIZE];
+    int total = 0;
+
+    // Read until we find end of headers
+    while (1)
+    {
+        int bytes = read(socket, buffer + total, MAX_REQUEST_SIZE - total - 1);
+
+        if (bytes < 0)
+        {
+            log_error("read failed", strerror(errno));
+            return -1;
+        }
+        if (bytes == 0)
+        {
+            log_error("client closed connection ", strerror(errno));
+            return -1;
+        }
+
+        total += bytes;
+        buffer[total] = '\0';
+
+        if (strstr(buffer, "\r\n\r\n"))
+            break;
+
+        if (total >= MAX_REQUEST_SIZE - 1)
+        {
+            log_error("request too large");
+            return -2;
+        }
+    }
+
+    log_info("Raw Request:\n%s\n", buffer);
+
+    // Parse request line
+    char *cursor = buffer;
+
+    char *line_end = strstr(cursor, "\r\n");
+    if (!line_end)
+    {
+        log_error("malformed request line");
+        return -1;
+    }
+    *line_end = '\0';
+
+    if (sscanf(buffer, "%15s %1023s %15s", req->method, req->path, req->version) != 3)
+    {
+        log_error("malformed request line");
+        return -1;
+    }
+
+    cursor = line_end + 2;
+
+    req->header_count = 0;
+
+    while (req->header_count < MAX_HEADERS)
+    {
+        line_end = strstr(cursor, "\r\n");
+        if (!line_end)
+            break;
+
+        *line_end = '\0';
+
+        // empty line means end of header
+        if (*cursor == '\0')
+            break;
+
+        // split on ": "
+        char *colon = strstr(cursor, ": ");
+        if (colon)
+        {
+            int key_len = colon - cursor;
+            int value_len = (line_end - colon) - 2;
+
+            if (key_len > MAX_HEADER_KEY - 1)
+                key_len = MAX_HEADER_KEY - 1;
+            if (value_len > MAX_HEADER_VALUE - 1)
+                value_len = MAX_HEADER_VALUE - 1;
+
+            http_header_t *h = &req->headers[req->header_count++];
+            strncpy(h->key, cursor, key_len);
+            strncpy(h->value, colon + 2, value_len);
+
+            h->key[key_len] = '\0';
+            h->value[value_len] = '\0';
+        }
+
+        cursor = line_end + 2;
+    }
+
+    // #TODO parse body
+    req->body = NULL;
+    req->body_length = 0;
+    return 0;
+}
