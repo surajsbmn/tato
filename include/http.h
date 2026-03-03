@@ -30,6 +30,7 @@ typedef struct
 } http_request_t;
 
 int read_request(int socket, http_request_t *req);
-// void free_request(http_request_t *req);
+const char *get_header(const http_request_t *req, const char *key);
+void free_request(http_request_t *req);
 
 #endif

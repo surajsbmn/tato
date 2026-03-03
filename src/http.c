@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
@@ -97,8 +98,72 @@ int read_request(int socket, http_request_t *req)
         cursor = line_end + 2;
     }
 
-    // #TODO parse body
     req->body = NULL;
     req->body_length = 0;
+
+    const char *content_length_val = get_header(req, "Content-Length");
+    if (content_length_val)
+    {
+        int content_length = atoi(content_length_val);
+
+        if (content_length > 0 && content_length <= MAX_BODY_SIZE)
+        {
+            req->body = malloc(content_length + 1);
+            if (!req->body)
+            {
+                log_error("malloc failed", strerror(errno));
+                return -1;
+            }
+        }
+
+        // some body bytes may already be in buffer after \r\n\r\n
+        int already_read = total - (cursor - buffer);
+        if (already_read > content_length)
+            already_read = content_length;
+
+        memcpy(req->body, cursor, already_read);
+        req->body_length = already_read;
+
+        // read remaining body bytes if needed
+        while (req->body_length < content_length)
+        {
+            int bytes = read(socket,
+                             req->body + req->body_length,
+                             content_length - req->body_length);
+            if (bytes < 0)
+            {
+                log_error("body read failed", strerror(errno));
+                free_request(req);
+                return -1;
+            }
+            if (bytes == 0)
+                break;
+            req->body_length += bytes;
+        }
+
+        req->body[req->body_length] = '\0';
+    }
+
     return 0;
+}
+
+const char *get_header(const http_request_t *req, const char *key)
+{
+    for (int i = 0; i < req->header_count; i++)
+    {
+        if (strcmp(req->headers[i].key, key) == 0)
+        {
+            return req->headers[i].value;
+        }
+    }
+    return NULL;
+}
+
+void free_request(http_request_t *req)
+{
+    if (req->body)
+    {
+        free(req->body);
+        req->body = NULL;
+    }
 }
