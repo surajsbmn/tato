@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include "logger.h"
+#include "http.h"
 
 #define PORT 8899
 
@@ -58,7 +59,7 @@ int main()
 	{
 		// Accept incoming connection
 		if ((socket = accept(listener_socket, (struct sockaddr *)&client_addr,
-								 &client_len)) < 0)
+							 &client_len)) < 0)
 		{
 			log_error("Failed to accept connection", strerror(errno));
 			close(listener_socket);
@@ -70,9 +71,12 @@ int main()
 		log_info("Connection accepted from %s:%d\n", client_sin_addr, client_port);
 
 		// read what client is sending
-		char buffer[4096] = {0};
-		read(socket, buffer, sizeof(buffer) - 1);
-		log_info("Request:\n%s\n", buffer);
+		http_request_t req = {0};
+		int r = read_request(socket, &req);
+		if (r != 0)
+		{
+			log_error("Failed to parse request");
+		}
 
 		char *response = build_response();
 
