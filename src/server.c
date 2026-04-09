@@ -11,13 +11,24 @@
 #include "http.h"
 
 #define PORT 8899
-
+#define WEB_DIR "www"
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+void check_web_dir();
 char *build_response();
+char *serve_file(http_request_t *request);
+char *not_supported_response();
+
+char resolved_base[PATH_MAX];
+
 
 int main()
 {
+
 	logger_init("server.log");
 
+	check_web_dir();
 	int listener_socket = socket(AF_INET, SOCK_STREAM, 0);
 
 	if (listener_socket < 0)
@@ -77,8 +88,9 @@ int main()
 		{
 			log_error("Failed to parse request");
 		}
-
-		char *response = build_response();
+		// Serve html files from public dir
+		char *response = serve_file(&req);
+		// char *response = build_response();
 
 		send(socket, response, strlen(response), 0);
 		free(response);
@@ -125,4 +137,67 @@ char *build_response()
 			 "%s",
 			 strlen(body), body);
 	return response;
+}
+
+char *serve_file(http_request_t *request){
+	// #TODO  add consts 
+	if(strcmp(request->method, "GET") != 0){
+		//return not supported
+		//return 405
+		return not_supported_response(); 
+	}
+
+	// if get then read request->path
+	char filepath[PATH_MAX
+];
+	char *request_path = request->path;
+	
+	if(strcmp(request_path, "/") == 0){
+		request_path = "/index.html";
+	}
+	
+	snprintf(filepath, sizeof(filepath), "%s%s",  WEB_DIR, request_path);
+	
+	// if file exists hen return the html file
+	// else return 404
+
+	char resolved_path[PATH_MAX
+];
+	if(realpath(WEB_DIR, resolved_path) ==  NULL) {
+		//return  404
+	}
+
+	log_info(resolved_path);
+	
+	if(strncmp(resolved_path, resolved_base, strlen(WEB_DIR)) != 0){
+		//  return 403
+	}
+
+	return NULL;
+}
+
+char *not_supported_response() {
+    const char *body = "<h1>405 Method Not Allowed</h1>";
+    size_t body_len = strlen(body);
+    int header_overhead = 256;
+    size_t resp_size = body_len + header_overhead;
+    char *resp = malloc(resp_size);
+    
+    snprintf(resp, resp_size,
+        "HTTP/1.1 405 Method Not Allowed\r\n"
+        "Content-Type: text/html\r\n"
+        "Allow: GET\r\n"
+        "Content-Length: %zu\r\n"
+        "\r\n"
+        "%s",
+        body_len, body);
+    
+    return resp;
+}
+
+void  check_web_dir(){
+	if(realpath(WEB_DIR, resolved_base) == NULL) {
+		log_error("Web dir not found");
+		exit(1);
+	}
 }
