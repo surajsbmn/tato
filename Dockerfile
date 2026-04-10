@@ -5,7 +5,9 @@ COPY . .
 RUN make
 
 FROM alpine:latest
+RUN apk add --no-cache libgcc
 WORKDIR /app
 COPY --from=builder /app/server .
-EXPOSE 8080
+COPY --from=builder /app/www ./www/
+EXPOSE 8899
 CMD ["./server"]
