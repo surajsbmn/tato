@@ -1,13 +1,12 @@
-FROM alpine:latest AS builder
-RUN apk add --no-cache build-base
+FROM debian:bookworm-slim AS builder
+RUN apt-get update && apt-get install -y build-essential
 WORKDIR /app
 COPY . .
 RUN make
 
-FROM alpine:latest
-RUN apk add --no-cache libgcc
+FROM debian:bookworm-slim
 WORKDIR /app
-COPY --from=builder ./build/server .
-COPY --from=builder ./www/ ./www/
+COPY --from=builder /app/build/server .
+COPY --from=builder /app/www ./www/
 EXPOSE 8899
 CMD ["./server"]
