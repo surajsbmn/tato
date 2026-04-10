@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <signal.h>
+#include <sys/time.h>
 #include "logger.h"
 #include "http.h"
 
@@ -16,6 +18,7 @@
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
+
 void check_web_dir();
 char *serve_file(http_request_t *request, size_t *response_len);
 char *build_error_response(int status, const char *status_text, const char *body, size_t *out_len);
@@ -23,8 +26,18 @@ const char *mime_from_path(const char *path);
 
 char resolved_base[PATH_MAX];
 
+static volatile int running  = 1;
+
+static void handle_signal(int sig) 
+{
+	(void)sig;
+	running = 0;
+}
+
 int main()
 {
+	signal(SIGINT, handle_signal);
+	signal(SIGTERM, handle_signal);
 
 	logger_init("server.log");
 
@@ -45,6 +58,8 @@ int main()
 
 	int opt = 1;
 	setsockopt(listener_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+	struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
+	setsockopt(listener_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 	if (bind(listener_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
 	{
 		log_error("Bind failed", strerror(errno));
@@ -61,20 +76,21 @@ int main()
 
 	log_info("Listening on port %d ...", PORT);
 
-	int socket;
+	int socket = 0;
 	struct sockaddr_in client_addr;
 	socklen_t client_len = sizeof(client_addr);
 
 	// Connection handling loop
-	while (1)
+	while (running)
 	{
 		// Accept incoming connection
 		if ((socket = accept(listener_socket, (struct sockaddr *)&client_addr,
 							 &client_len)) < 0)
 		{
+			if(!running) break;
+			if(errno == EAGAIN || errno == EWOULDBLOCK) continue;
 			log_error("Failed to accept connection", strerror(errno));
-			close(listener_socket);
-			exit(EXIT_FAILURE);
+			continue;			
 		}
 
 		char *client_sin_addr = inet_ntoa(client_addr.sin_addr);
@@ -98,9 +114,10 @@ int main()
 	}
 
 	// Close the sockets
+	log_info("Shutting down...");
 	close(socket);
 	close(listener_socket);
-
+	logger_close();
 	return 0;
 }
 
