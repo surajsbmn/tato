@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/stat.h>
 #include "logger.h"
 #include "http.h"
 
@@ -16,12 +17,11 @@
 #define PATH_MAX 4096
 #endif
 void check_web_dir();
-char *build_response();
-char *serve_file(http_request_t *request);
-char *not_supported_response();
+char *serve_file(http_request_t *request, size_t *response_len);
+char *build_error_response(int status, const char *status_text, const char *body, size_t *out_len);
+const char *mime_from_path(const char *path);
 
 char resolved_base[PATH_MAX];
-
 
 int main()
 {
@@ -89,11 +89,12 @@ int main()
 			log_error("Failed to parse request");
 		}
 		// Serve html files from public dir
-		char *response = serve_file(&req);
-		// char *response = build_response();
+		size_t response_len;
+		char *response = serve_file(&req, &response_len);
 
-		send(socket, response, strlen(response), 0);
+		send(socket, response, response_len, 0);
 		free(response);
+		close(socket);
 	}
 
 	// Close the sockets
@@ -103,101 +104,117 @@ int main()
 	return 0;
 }
 
-char *build_response()
+char *serve_file(http_request_t *request, size_t *out_len)
 {
-	// read the source
-	FILE *src_file = fopen("server.c", "r");
-	char src_buf[65536] = {0};
-	if (src_file)
+	// #TODO  add consts
+	if (strcmp(request->method, "GET") != 0)
 	{
-		fread(src_buf, 1, sizeof(src_buf) - 1, src_file);
-		fclose(src_file);
+		return build_error_response(405, "Method Not Allowed", "<h1>405 Method Not Allowed</h1>", out_len);
 	}
 
-	// build html body
-	char body[131072];
-	snprintf(body, sizeof(body),
-			 "<!DOCTYPE html>\n"
-			 "<html>\n"
-			 "<head><title>My Web Server</title></head>\n"
-			 "<body>\n"
-			 "<h1>Hello, World!</h1>\n"
-			 "<h2>Here's the source code running this server:</h2>\n"
-			 "<plaintext>%s",
-			 src_buf);
+	// if get then read request->path
+	char filepath[PATH_MAX];
+	char *request_path = request->path;
+	if (strcmp(request_path, "/") == 0)
+	{
+		request_path = "/index.html";
+	}
 
-	// buidl http response
-	size_t response_size = strlen(body) + 256;
-	char *response = malloc(response_size);
-	snprintf(response, response_size,
-			 "HTTP/1.1 200 OK\r\n"
+	snprintf(filepath, sizeof(filepath), "%s%s", WEB_DIR, request_path);
+	char resolved_path[PATH_MAX];
+	if (realpath(filepath, resolved_path) == NULL)
+	{
+		return build_error_response(404, "Not Found", "<h1>404 Not Found</h1>", out_len);
+	}
+
+	if (strncmp(resolved_path, resolved_base, strlen(resolved_base)) != 0)
+	{
+		return build_error_response(403, "Forbidden", "<h1>403 Forbidden</h1>", out_len);
+	}
+
+	// if file exists hen return the html file
+	struct stat st;
+	if (stat(resolved_path, &st) < 0)
+	{
+		return build_error_response(404, "Not Found", "<h1>404 Not Found</h1>", out_len);
+	}
+
+	if (!S_ISREG(st.st_mode))
+	{
+		return build_error_response(403, "Forbidden", "<h1>403 Forbidden</h1>", out_len);
+	}
+
+	FILE *f = fopen(resolved_path, "rb");
+	if (!f)
+	{
+		return build_error_response(500, "Internal Server Error", "<h1>500 Internal Server Error</h1>", out_len);
+	}
+
+	char *file_buf = malloc(st.st_size);
+	fread(file_buf, 1, st.st_size, f);
+	fclose(f);
+
+	const char *mime = mime_from_path(resolved_path);
+
+	char headers[256];
+	int headers_len = snprintf(headers, sizeof(headers),
+							   "HTTP/1.1 200 OK\r\n"
+							   "Content-Type: %s\r\n"
+							   "Content-Length: %ld\r\n"
+							   "\r\n",
+							   mime, st.st_size);
+	char *response = malloc(headers_len + st.st_size);
+	memcpy(response, headers, headers_len);
+	memcpy(response + headers_len, file_buf, st.st_size);
+
+	free(file_buf);
+
+	*out_len = headers_len + st.st_size;
+
+	return response;
+}
+
+void check_web_dir()
+{
+	if (realpath(WEB_DIR, resolved_base) == NULL)
+	{
+		log_error("Web dir not found");
+		exit(1);
+	}
+}
+
+char *build_error_response(int status, const char *status_text, const char *body, size_t *out_len)
+{
+	size_t body_len = strlen(body);
+	size_t resp_size = body_len + 256;
+	char *resp = malloc(resp_size);
+	snprintf(resp, resp_size,
+			 "HTTP/1.1 %d %s\r\n"
 			 "Content-Type: text/html\r\n"
 			 "Content-Length: %zu\r\n"
 			 "\r\n"
 			 "%s",
-			 strlen(body), body);
-	return response;
+			 status, status_text, body_len, body);
+	*out_len = strlen(resp);
+	return resp;
 }
 
-char *serve_file(http_request_t *request){
-	// #TODO  add consts 
-	if(strcmp(request->method, "GET") != 0){
-		//return not supported
-		//return 405
-		return not_supported_response(); 
-	}
-
-	// if get then read request->path
-	char filepath[PATH_MAX
-];
-	char *request_path = request->path;
-	
-	if(strcmp(request_path, "/") == 0){
-		request_path = "/index.html";
-	}
-	
-	snprintf(filepath, sizeof(filepath), "%s%s",  WEB_DIR, request_path);
-	
-	// if file exists hen return the html file
-	// else return 404
-
-	char resolved_path[PATH_MAX
-];
-	if(realpath(WEB_DIR, resolved_path) ==  NULL) {
-		//return  404
-	}
-
-	log_info(resolved_path);
-	
-	if(strncmp(resolved_path, resolved_base, strlen(WEB_DIR)) != 0){
-		//  return 403
-	}
-
-	return NULL;
-}
-
-char *not_supported_response() {
-    const char *body = "<h1>405 Method Not Allowed</h1>";
-    size_t body_len = strlen(body);
-    int header_overhead = 256;
-    size_t resp_size = body_len + header_overhead;
-    char *resp = malloc(resp_size);
-    
-    snprintf(resp, resp_size,
-        "HTTP/1.1 405 Method Not Allowed\r\n"
-        "Content-Type: text/html\r\n"
-        "Allow: GET\r\n"
-        "Content-Length: %zu\r\n"
-        "\r\n"
-        "%s",
-        body_len, body);
-    
-    return resp;
-}
-
-void  check_web_dir(){
-	if(realpath(WEB_DIR, resolved_base) == NULL) {
-		log_error("Web dir not found");
-		exit(1);
-	}
+const char *mime_from_path(const char *path)
+{
+	const char *ext = strrchr(path, '.');
+	if (!ext)
+		return "application/octet-stream";
+	if (strcmp(ext, ".html") == 0)
+		return "text/html";
+	if (strcmp(ext, ".css") == 0)
+		return "text/css";
+	if (strcmp(ext, ".js") == 0)
+		return "application/javascript";
+	if (strcmp(ext, ".png") == 0)
+		return "image/png";
+	if (strcmp(ext, ".jpg") == 0)
+		return "image/jpeg";
+	if (strcmp(ext, ".ico") == 0)
+		return "image/x-icon";
+	return "application/octet-stream";
 }
