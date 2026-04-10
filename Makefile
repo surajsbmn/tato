@@ -1,6 +1,6 @@
 CC = gcc
 CPPFLAGS = -Iinclude
-CFLAGS = -Wall -Wextra -std=c11 -O2 -D_POSIX_C_SOURCE=200809L
+CFLAGS = -Wall -Wextra -std=c11 -O2 -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE
 LDFLAGS = 
 LDLIBS = -lpthread
 
