@@ -40,8 +40,6 @@ int read_request(int socket, http_request_t *req)
         }
     }
 
-    log_info("Raw Request:\n%s\n", buffer);
-
     // Parse request line
     char *cursor = buffer;
 
